@@ -51,9 +51,9 @@ jobs:
           releaseBody: |
             ## LiteAsk v__VERSION__
 
-            - 修复 macOS 无法修改全局弹窗快捷键的问题（改用窗口级捕获监听绕过 WKWebView 按钮失焦限制，支持 Option 组合键与中文输入法下的物理键位识别，录制期间暂停旧热键并支持即时生效与冲突提示）
-            - 修复 macOS Dock 栏残留图标及点击 Dock / 重新打开 LiteAsk 无响应的问题（增加 `LSUIElement=true` 并监听 `RunEvent::Reopen` 自动唤出偏好设置）
-            - 优化设置页底部「版本与自动更新」卡片，检测到新版本后直接在当前区域展示「立即更新并重启」按钮与下载进度条
+            - 修复 macOS 在 `LSUIElement=true` 隐藏 Dock 图标后从「应用程序」或 Spotlight 再次打开 LiteAsk 未唤出窗口的问题（底层注册 `NSAppleEventManager` 的 `kAEReopenApplication` / `kAEOpenApplication` 事件，并自动移动到当前活跃桌面）
+            - 修复 macOS 偏好设置窗口不再压住系统设置窗口（恢复 `NSNormalWindowLevel`），方便授权操作
+            - 增强 macOS 辅助功能权限引导：新增「重置旧记录」一键按钮（清除升级后失效的旧签名 TCC 缓存并打开系统设置），授权通过后自动通知并刷新设置页状态
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}

@@ -194,9 +194,45 @@ fn check_accessibility(prompt: bool) -> bool {
     trusted
 }
 
+#[cfg(target_os = "macos")]
+static AX_POLLING: AtomicBool = AtomicBool::new(false);
+
+#[cfg(target_os = "macos")]
+fn spawn_accessibility_poller(app: AppHandle) {
+    if AX_POLLING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            if selection::check_accessibility(false) && selection::ensure_monitor_started() {
+                AX_POLLING.store(false, Ordering::SeqCst);
+                let _ = app.emit("accessibility:granted", true);
+                break;
+            }
+        }
+    });
+}
+
 #[tauri::command]
-fn open_accessibility_settings() {
+fn open_accessibility_settings(app: AppHandle) {
     selection::open_accessibility_settings();
+    #[cfg(target_os = "macos")]
+    if !selection::check_accessibility(false) {
+        spawn_accessibility_poller(app);
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
+}
+
+#[tauri::command]
+fn reset_accessibility_permission(app: AppHandle) -> Result<(), String> {
+    selection::reset_accessibility_permission()?;
+    #[cfg(target_os = "macos")]
+    spawn_accessibility_poller(app);
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
+    Ok(())
 }
 
 #[tauri::command]
@@ -261,7 +297,7 @@ fn trigger_selection_action(
 
     if let Some(action_win) = app.get_webview_window("action") {
         selection::position_action_window_near_last_selection(&action_win);
-        selection::activate_and_focus_window(&action_win);
+        selection::activate_and_focus_window(&action_win, true);
     }
 
     // ActionWindow receives `action:open`, initializes UI with its own request_id,
@@ -381,7 +417,7 @@ fn cancel_ai(state: State<'_, AppState>, request_id: String) {
 fn show_settings_window(app: &AppHandle) {
     if let Some(win) = app.get_webview_window("settings") {
         let _ = win.unminimize();
-        selection::activate_and_focus_window(&win);
+        selection::activate_and_focus_window(&win, false);
     }
 }
 
@@ -401,7 +437,7 @@ fn toggle_quick_ask_window(app: &AppHandle, seed_text: Option<String>) {
     if !visible {
         let _ = win.center();
     }
-    selection::activate_and_focus_window(&win);
+    selection::activate_and_focus_window(&win, true);
 
     if let Some(text) = seed_text {
         let _ = app.emit_to("quick-ask", "quick-ask:seed", QuickAskSeedPayload { text });
@@ -616,21 +652,16 @@ pub fn run() {
                 initial_settings.blacklist.clone(),
             );
 
+            // Install native macOS AppleEvent reopen handler (`rapp`/`oapp`) so reopening
+            // LiteAsk from Finder/Spotlight/Applications works even with LSUIElement=true.
+            selection::install_reopen_handler(show_settings_window);
+
             // On macOS, if Accessibility isn't granted yet, open Settings to guide user
             // and poll in background so the hook activates immediately once granted.
             #[cfg(target_os = "macos")]
             if !monitor_ok {
                 show_settings_window(&handle);
-                tauri::async_runtime::spawn(async move {
-                    loop {
-                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                        if selection::check_accessibility(false) {
-                            if selection::ensure_monitor_started() {
-                                break;
-                            }
-                        }
-                    }
-                });
+                spawn_accessibility_poller(handle.clone());
             }
 
             #[cfg(not(target_os = "macos"))]
@@ -655,6 +686,7 @@ pub fn run() {
             test_ai_connection,
             check_accessibility,
             open_accessibility_settings,
+            reset_accessibility_permission,
             set_action_pinned,
             set_quick_ask_pinned,
             hide_window,

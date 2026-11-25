@@ -101,6 +101,7 @@ export const api = {
   checkAccessibility: (prompt: boolean) =>
     invoke<boolean>("check_accessibility", { prompt }),
   openAccessibilitySettings: () => invoke<void>("open_accessibility_settings"),
+  resetAccessibilityPermission: () => invoke<void>("reset_accessibility_permission"),
   setActionPinned: (pinned: boolean) => invoke<void>("set_action_pinned", { pinned }),
   setQuickAskPinned: (pinned: boolean) => invoke<void>("set_quick_ask_pinned", { pinned }),
   hideWindow: (label: string) => invoke<void>("hide_window", { label }),

@@ -1,9 +1,11 @@
 use std::ffi::{c_char, c_void, CStr};
+use std::process::Command;
 use tauri::WebviewWindow;
 
 type SelectionCallback = extern "C" fn(*const c_char, f64, f64, *const c_char);
 type DismissCallback = extern "C" fn(f64, f64, bool);
 type FilterCallback = extern "C" fn(*const c_char) -> bool;
+type ReopenCallback = extern "C" fn();
 
 extern "C" {
     fn liteask_mac_is_accessibility_trusted(prompt: bool) -> bool;
@@ -11,7 +13,8 @@ extern "C" {
     fn liteask_mac_set_selection_enabled(enabled: bool);
     fn liteask_mac_configure_floating_panel(ns_window: *mut c_void, non_activating: bool);
     fn liteask_mac_show_inactive(ns_window: *mut c_void);
-    fn liteask_mac_activate_and_focus(ns_window: *mut c_void);
+    fn liteask_mac_activate_and_focus(ns_window: *mut c_void, floating: bool);
+    fn liteask_mac_install_reopen_handler(on_reopen: ReopenCallback);
     fn liteask_mac_start_selection_monitor(
         on_selection: SelectionCallback,
         on_dismiss: DismissCallback,
@@ -62,6 +65,30 @@ pub fn open_accessibility_settings() {
     unsafe { liteask_mac_open_accessibility_settings() }
 }
 
+/// Resets stale macOS TCC Accessibility entries (e.g. after ad-hoc signed upgrade),
+/// triggers the native accessibility prompt so the current bundle is registered,
+/// and opens System Settings -> Privacy & Security -> Accessibility.
+pub fn reset_accessibility_permission() -> Result<(), String> {
+    let output = Command::new("/usr/bin/tccutil")
+        .args(["reset", "Accessibility", "com.liteask.desktop"])
+        .output()
+        .map_err(|e| format!("无法调用 tccutil 重置授权记录: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("重置辅助功能记录失败: {}", stderr.trim()));
+    }
+
+    // Trigger macOS prompt so the new binary hash appears in the Accessibility list
+    let _ = is_accessibility_trusted(true);
+    open_accessibility_settings();
+    Ok(())
+}
+
+pub fn install_reopen_handler(cb: ReopenCallback) {
+    unsafe { liteask_mac_install_reopen_handler(cb) }
+}
+
 pub fn set_enabled(enabled: bool) {
     unsafe { liteask_mac_set_selection_enabled(enabled) }
 }
@@ -90,9 +117,9 @@ pub fn show_inactive(window: &WebviewWindow) {
     }
 }
 
-pub fn activate_and_focus(window: &WebviewWindow) {
+pub fn activate_and_focus(window: &WebviewWindow, floating: bool) {
     if let Ok(ns_win) = window.ns_window() {
-        unsafe { liteask_mac_activate_and_focus(ns_win) };
+        unsafe { liteask_mac_activate_and_focus(ns_win, floating) };
     } else {
         let _ = window.show();
         let _ = window.set_focus();

@@ -144,6 +144,44 @@ pub fn open_accessibility_settings() {
     macos::open_accessibility_settings();
 }
 
+pub fn reset_accessibility_permission() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        macos::reset_accessibility_permission()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "macos")]
+static REOPEN_CALLBACK: OnceLock<fn(&AppHandle)> = OnceLock::new();
+
+#[cfg(target_os = "macos")]
+extern "C" fn on_reopen_trampoline() {
+    if let (Some(rt), Some(cb)) = (RUNTIME.get(), REOPEN_CALLBACK.get()) {
+        let app = rt.app.clone();
+        let app_cb = app.clone();
+        let cb = *cb;
+        let _ = app.run_on_main_thread(move || {
+            cb(&app_cb);
+        });
+    }
+}
+
+pub fn install_reopen_handler(on_reopen: fn(&AppHandle)) {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = REOPEN_CALLBACK.set(on_reopen);
+        macos::install_reopen_handler(on_reopen_trampoline);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = on_reopen;
+    }
+}
+
 pub fn ensure_monitor_started() -> bool {
     #[cfg(target_os = "macos")]
     {
@@ -172,12 +210,13 @@ pub fn configure_floating_window(window: &WebviewWindow, non_activating: bool) {
     }
 }
 
-pub fn activate_and_focus_window(window: &WebviewWindow) {
+pub fn activate_and_focus_window(window: &WebviewWindow, floating: bool) {
     #[cfg(target_os = "macos")]
-    macos::activate_and_focus(window);
+    macos::activate_and_focus(window, floating);
 
     #[cfg(not(target_os = "macos"))]
     {
+        let _ = floating;
         let _ = window.show();
         let _ = window.set_focus();
     }

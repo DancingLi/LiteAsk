@@ -203,8 +203,9 @@ function syncActiveFields(s: AppSettings, activeId: string): AppSettings {
 export function SettingsWindow() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [platform, setPlatform] = useState("macos");
-  const [appVersion, setAppVersion] = useState("0.2.2");
+  const [appVersion, setAppVersion] = useState("0.2.3");
   const [axTrusted, setAxTrusted] = useState(true);
+  const [resettingAx, setResettingAx] = useState(false);
   const [showKey, setShowKey] = useState(false);
   const [blacklistText, setBlacklistText] = useState("");
   const [recordingShortcut, setRecordingShortcut] = useState(false);
@@ -298,7 +299,7 @@ export function SettingsWindow() {
       const [plat, s, ver] = await Promise.all([
         api.getPlatform(),
         api.getSettings(),
-        getVersion().catch(() => "0.2.2"),
+        getVersion().catch(() => "0.2.3"),
       ]);
       setPlatform(plat);
       setAppVersion(ver);
@@ -322,11 +323,32 @@ export function SettingsWindow() {
       listen("updater:check", () => {
         void runUpdateCheck(false);
       }),
+      listen<boolean>("accessibility:granted", (ev) => {
+        if (ev.payload) {
+          setAxTrusted(true);
+          setStatusBanner({ type: "ok", text: "已获得 macOS 辅助功能权限，划词助手已就绪！" });
+        }
+      }),
     ];
     return () => {
       unsubs.forEach((p) => void p.then((fn) => fn()));
     };
   }, [runUpdateCheck]);
+
+  // Re-check macOS Accessibility automatically when user returns from System Settings
+  useEffect(() => {
+    if (platform !== "macos" || axTrusted) return;
+    const onFocus = () => {
+      void api.checkAccessibility(false).then((trusted) => {
+        if (trusted) {
+          setAxTrusted(true);
+          setStatusBanner({ type: "ok", text: "已获得 macOS 辅助功能权限，划词助手已就绪！" });
+        }
+      });
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [platform, axTrusted]);
 
   // Global window-level capture for shortcut recording so macOS WKWebView
   // (where clicking a <button> does not grant keyboard focus) reliably captures keystrokes.
@@ -472,6 +494,27 @@ export function SettingsWindow() {
     setAxTrusted(trusted);
     if (trusted) {
       setStatusBanner({ type: "ok", text: "已获得 macOS 辅助功能权限，划词助手已就绪！" });
+    } else {
+      setStatusBanner({
+        type: "err",
+        text: "仍未检测到辅助功能权限。如刚升级过版本，请点击「重置旧记录」或在系统设置里先点「-」删除旧 LiteAsk 后再点「+」重新添加。",
+      });
+    }
+  };
+
+  const handleResetAccessibility = async () => {
+    setResettingAx(true);
+    try {
+      await api.resetAccessibilityPermission();
+      setAxTrusted(false);
+      setStatusBanner({
+        type: "ok",
+        text: "已清除旧版本辅助功能记录并打开系统设置，请在列表中重新勾选或点击「+」添加 LiteAsk。",
+      });
+    } catch (err) {
+      setStatusBanner({ type: "err", text: String(err) });
+    } finally {
+      setResettingAx(false);
     }
   };
 
@@ -727,12 +770,21 @@ export function SettingsWindow() {
                 <p className="text-[12px] text-[var(--text-secondary)] mt-0.5">
                   {axTrusted
                     ? "系统级划词监听已授权。"
-                    : "划词检测需要「系统设置 → 隐私与安全性 → 辅助功能」授权 LiteAsk，开启后无需重启即可生效。"}
+                    : "划词检测需要在「系统设置 → 隐私与安全性 → 辅助功能」中授权 LiteAsk。若更新版本后原开关失效，请点击右侧「重置旧记录」清除旧签名缓存后重新勾选（无需重启）。"}
                 </p>
               </div>
             </div>
             {!axTrusted && (
               <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => void handleResetAccessibility()}
+                  disabled={resettingAx}
+                  className="px-2.5 py-1.5 rounded-lg bg-[var(--surface-subtle)] border border-[var(--border-color)] hover:border-[var(--accent)] text-[12px] font-medium cursor-pointer disabled:opacity-50"
+                  title="清除旧版本残留的辅助功能记录并重新打开系统设置"
+                >
+                  {resettingAx ? "重置中..." : "重置旧记录"}
+                </button>
                 <button
                   type="button"
                   onClick={() => void api.openAccessibilitySettings()}

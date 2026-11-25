@@ -7,10 +7,39 @@
 typedef void (*LiteAskSelectionCallback)(const char *text, double x, double y, const char *app_id);
 typedef void (*LiteAskDismissCallback)(double x, double y, bool is_click);
 typedef bool (*LiteAskFilterCallback)(const char *app_id);
+typedef void (*LiteAskReopenCallback)(void);
 
 static LiteAskSelectionCallback g_on_selection = NULL;
 static LiteAskDismissCallback g_on_dismiss = NULL;
 static LiteAskFilterCallback g_is_blocked_app = NULL;
+static LiteAskReopenCallback g_on_reopen = NULL;
+static CFAbsoluteTime g_reopen_registered_at = 0;
+
+@interface LiteAskAppleEventHandler : NSObject
+- (void)handleReopenEvent:(NSAppleEventDescriptor *)event withReplyEvent:(NSAppleEventDescriptor *)replyEvent;
+- (void)handleOpenAppEvent:(NSAppleEventDescriptor *)event withReplyEvent:(NSAppleEventDescriptor *)replyEvent;
+@end
+
+@implementation LiteAskAppleEventHandler
+- (void)handleReopenEvent:(NSAppleEventDescriptor *)event withReplyEvent:(NSAppleEventDescriptor *)replyEvent {
+    (void)event;
+    (void)replyEvent;
+    if (g_on_reopen) {
+        g_on_reopen();
+    }
+}
+
+- (void)handleOpenAppEvent:(NSAppleEventDescriptor *)event withReplyEvent:(NSAppleEventDescriptor *)replyEvent {
+    (void)event;
+    (void)replyEvent;
+    // Ignore the initial launch `oapp` event; treat later `oapp` events as user reopening the app.
+    if (g_on_reopen && (CFAbsoluteTimeGetCurrent() - g_reopen_registered_at) > 1.2) {
+        g_on_reopen();
+    }
+}
+@end
+
+static LiteAskAppleEventHandler *g_ae_handler = nil;
 
 static CFMachPortRef g_event_tap = NULL;
 static _Atomic bool g_enabled = true;
@@ -76,13 +105,46 @@ void liteask_mac_show_inactive(void *ns_window_ptr) {
     });
 }
 
-void liteask_mac_activate_and_focus(void *ns_window_ptr) {
+void liteask_mac_install_reopen_handler(LiteAskReopenCallback on_reopen) {
+    g_on_reopen = on_reopen;
+    g_reopen_registered_at = CFAbsoluteTimeGetCurrent();
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (!g_ae_handler) {
+            g_ae_handler = [[LiteAskAppleEventHandler alloc] init];
+        }
+        NSAppleEventManager *mgr = [NSAppleEventManager sharedAppleEventManager];
+        [mgr setEventHandler:g_ae_handler
+                 andSelector:@selector(handleReopenEvent:withReplyEvent:)
+               forEventClass:'aevt'
+                  andEventID:'rapp'];
+        [mgr setEventHandler:g_ae_handler
+                 andSelector:@selector(handleOpenAppEvent:withReplyEvent:)
+               forEventClass:'aevt'
+                  andEventID:'oapp'];
+    });
+}
+
+void liteask_mac_activate_and_focus(void *ns_window_ptr, bool floating) {
     if (!ns_window_ptr) return;
     NSWindow *window = (__bridge NSWindow *)ns_window_ptr;
     dispatch_async(dispatch_get_main_queue(), ^{
-        [window setLevel:NSFloatingWindowLevel];
+        if (floating) {
+            [window setLevel:NSFloatingWindowLevel];
+        } else {
+            [window setLevel:NSNormalWindowLevel];
+            [window setCollectionBehavior:([window collectionBehavior] | NSWindowCollectionBehaviorMoveToActiveSpace)];
+        }
+        if ([window isMiniaturized]) {
+            [window deminiaturize:nil];
+        }
+        if (@available(macOS 14.0, *)) {
+            [NSApp activate];
+        }
         [NSApp activateIgnoringOtherApps:YES];
         [window makeKeyAndOrderFront:nil];
+        if (floating) {
+            [window orderFrontRegardless];
+        }
     });
 }
 
