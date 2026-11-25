@@ -28,9 +28,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, GetForegroundWindow, GetMessageW, GetWindowLongPtrW,
     GetWindowThreadProcessId, SetWindowLongPtrW, SetWindowPos, SetWindowsHookExW, ShowWindow,
     TranslateMessage, GWL_EXSTYLE, HHOOK, HWND_TOPMOST, KBDLLHOOKSTRUCT, MSG, MSLLHOOKSTRUCT,
-    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_SHOWNOACTIVATE, WH_KEYBOARD_LL, WH_MOUSE_LL,
-    WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WS_EX_NOACTIVATE,
-    WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_HIDE, SW_SHOWNOACTIVATE, WH_KEYBOARD_LL,
+    WH_MOUSE_LL, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEWHEEL, WM_RBUTTONDOWN,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
 };
 
 static ENABLED: AtomicBool = AtomicBool::new(true);
@@ -123,6 +123,18 @@ pub fn show_inactive(window: &WebviewWindow) {
     }
 }
 
+/// Pair with `show_inactive`: bypasses tao's cached `WindowFlags::VISIBLE` diff check
+/// so hiding always calls native `ShowWindow(hwnd, SW_HIDE)`.
+pub fn hide_window(window: &WebviewWindow) {
+    if let Ok(hwnd_raw) = window.hwnd() {
+        let hwnd = HWND(hwnd_raw.0);
+        unsafe {
+            let _ = ShowWindow(hwnd, SW_HIDE);
+        }
+    }
+    let _ = window.hide();
+}
+
 unsafe extern "system" fn mouse_hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if code >= 0 && ENABLED.load(Ordering::Relaxed) {
         let info = *(lparam.0 as *const MSLLHOOKSTRUCT);
@@ -152,7 +164,7 @@ unsafe extern "system" fn mouse_hook_proc(code: i32, wparam: WPARAM, lparam: LPA
                             let dt = now.duration_since(prev);
                             let pdx = (x - GESTURE.last_up_x) as f64;
                             let pdy = (y - GESTURE.last_up_y) as f64;
-                            dt <= Duration::from_millis(500) && (pdx * pdx + pdy * pdy).sqrt() <= 8.0
+                            dt <= Duration::from_millis(500) && (pdx * pdx + pdy * pdy).sqrt() <= 10.0
                         }
                         None => false,
                     };
@@ -166,12 +178,15 @@ unsafe extern "system" fn mouse_hook_proc(code: i32, wparam: WPARAM, lparam: LPA
                     GESTURE.last_up_x = x;
                     GESTURE.last_up_y = y;
 
-                    let drag_ok = drag_dist >= 6.0
+                    // WH_MOUSE_LL coordinates are physical pixels; use 10px to avoid
+                    // single-click jitter on 150%-200% HiDPI Windows 11 displays.
+                    const MIN_DRAG_PX: f64 = 10.0;
+                    let drag_ok = drag_dist >= MIN_DRAG_PX
                         && GESTURE
                             .down_at
                             .map(|t| now.duration_since(t) < Duration::from_secs(10))
                             .unwrap_or(true);
-                    let click_ok = GESTURE.click_streak >= 2 && drag_dist < 6.0;
+                    let click_ok = GESTURE.click_streak >= 2 && drag_dist < MIN_DRAG_PX;
 
                     if drag_ok || click_ok {
                         let gen = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;

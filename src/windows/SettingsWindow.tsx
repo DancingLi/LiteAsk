@@ -83,7 +83,7 @@ function syncActiveFields(s: AppSettings, activeId: string): AppSettings {
 export function SettingsWindow() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [platform, setPlatform] = useState("macos");
-  const [appVersion, setAppVersion] = useState("0.2.0");
+  const [appVersion, setAppVersion] = useState("0.2.1");
   const [axTrusted, setAxTrusted] = useState(true);
   const [showKey, setShowKey] = useState(false);
   const [blacklistText, setBlacklistText] = useState("");
@@ -175,7 +175,7 @@ export function SettingsWindow() {
       const [plat, s, ver] = await Promise.all([
         api.getPlatform(),
         api.getSettings(),
-        getVersion().catch(() => "0.2.0"),
+        getVersion().catch(() => "0.2.1"),
       ]);
       setPlatform(plat);
       setAppVersion(ver);

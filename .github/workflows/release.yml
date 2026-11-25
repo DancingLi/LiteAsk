@@ -51,10 +51,9 @@ jobs:
           releaseBody: |
             ## LiteAsk v__VERSION__
 
-            - 跨平台（macOS Apple Silicon / Intel & Windows）轻量划词翻译、解释与桌面弹窗助手
-            - 支持自定义模型供应商（任意 OpenAI 兼容 Base URL + API Key + 模型 ID）
-            - 支持按场景自定义模型思考强度（翻译默认关闭思考、解释与弹窗助手可自由配置）
-            - 内置自动更新（已安装版本可在「偏好设置 → 版本与自动更新」一键在线升级）
+            - 修复 Windows 11 划词悬浮条弹出后点击页面空白处无法隐藏的问题（配对调用原生 `ShowWindow(SW_HIDE)` 解决 Tauri/tao 可见状态缓存不同步）
+            - 优化主线程异步弹出竞态（引入 `dismiss_epoch` 校验）及 Windows 高 DPI 屏防误触拖拽阈值
+            - 支持自定义模型供应商、按场景自定义模型思考强度与 GitHub Releases 自动更新
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}

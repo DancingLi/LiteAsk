@@ -1,5 +1,6 @@
 use parking_lot::RwLock;
 use serde::Serialize;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 #[cfg(not(target_os = "windows"))]
@@ -43,6 +44,7 @@ pub struct SelectionRuntime {
     pub blacklist: RwLock<Vec<String>>,
     pub last_selection: RwLock<Option<SelectionPayload>>,
     pub toolbar_rect: RwLock<ToolbarRect>,
+    pub dismiss_epoch: AtomicU64,
 }
 
 static RUNTIME: OnceLock<SelectionRuntime> = OnceLock::new();
@@ -61,6 +63,7 @@ pub fn init(app: AppHandle, enabled: bool, auto_popup: bool, blacklist: Vec<Stri
         ),
         last_selection: RwLock::new(None),
         toolbar_rect: RwLock::new(ToolbarRect::default()),
+        dismiss_epoch: AtomicU64::new(0),
     });
 
     set_enabled(enabled, auto_popup);
@@ -204,9 +207,18 @@ pub fn handle_text_selected(text: String, x: f64, y: f64, app_id: String) {
     };
     *rt.last_selection.write() = Some(payload.clone());
 
+    let expected_epoch = rt.dismiss_epoch.load(Ordering::SeqCst);
     let app = rt.app.clone();
     let app_cb = app.clone();
     let _ = app.run_on_main_thread(move || {
+        if let Some(rt) = RUNTIME.get() {
+            if !*rt.enabled.read()
+                || !*rt.auto_popup.read()
+                || rt.dismiss_epoch.load(Ordering::SeqCst) != expected_epoch
+            {
+                return;
+            }
+        }
         show_toolbar_near(&app_cb, payload);
     });
 }
@@ -219,11 +231,7 @@ pub fn handle_dismiss_signal(x: f64, y: f64, is_click: bool) {
     };
 
     let rect = rt.toolbar_rect.read().clone();
-    if !rect.visible {
-        return;
-    }
-
-    if is_click {
+    if is_click && rect.visible {
         // Give a small 4px cushion around toolbar rect so clicking buttons inside never dismisses prematurely
         let inside = x >= rect.x - 4.0
             && x <= rect.x + rect.width + 4.0
@@ -234,20 +242,42 @@ pub fn handle_dismiss_signal(x: f64, y: f64, is_click: bool) {
         }
     }
 
+    // Always advance dismiss_epoch so any in-flight main-thread `show_toolbar_near`
+    // queued just before this click/scroll/keypress is discarded.
+    rt.dismiss_epoch.fetch_add(1, Ordering::SeqCst);
+
+    if !rect.visible {
+        return;
+    }
+
     let app = rt.app.clone();
     let app_cb = app.clone();
     let _ = app.run_on_main_thread(move || {
-        hide_toolbar(&app_cb);
+        hide_toolbar_window(&app_cb);
     });
 }
 
-pub fn hide_toolbar(app: &AppHandle) {
+fn hide_toolbar_window(app: &AppHandle) {
     if let Some(rt) = RUNTIME.get() {
         rt.toolbar_rect.write().visible = false;
     }
     if let Some(win) = app.get_webview_window("toolbar") {
-        let _ = win.hide();
+        #[cfg(target_os = "windows")]
+        {
+            windows::hide_window(&win);
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = win.hide();
+        }
     }
+}
+
+pub fn hide_toolbar(app: &AppHandle) {
+    if let Some(rt) = RUNTIME.get() {
+        rt.dismiss_epoch.fetch_add(1, Ordering::SeqCst);
+    }
+    hide_toolbar_window(app);
 }
 
 fn show_toolbar_near(app: &AppHandle, payload: SelectionPayload) {
