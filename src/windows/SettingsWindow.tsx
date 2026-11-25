@@ -46,26 +46,146 @@ const PROVIDER_TEMPLATES: { name: string; baseUrl: string; model: string }[] = [
   { name: "本地 Ollama", baseUrl: "http://localhost:11434/v1", model: "qwen2.5:7b" },
 ];
 
-function formatKeyEventToShortcut(e: React.KeyboardEvent): string | null {
+const MODIFIER_CODES = new Set([
+  "MetaLeft",
+  "MetaRight",
+  "OSLeft",
+  "OSRight",
+  "ControlLeft",
+  "ControlRight",
+  "AltLeft",
+  "AltRight",
+  "ShiftLeft",
+  "ShiftRight",
+  "CapsLock",
+]);
+
+const MODIFIER_KEYS = new Set(["Meta", "Control", "Alt", "Shift", "CapsLock"]);
+
+const SUPPORTED_NAMED_CODES = new Set([
+  "Backquote",
+  "Backslash",
+  "BracketLeft",
+  "BracketRight",
+  "Comma",
+  "Equal",
+  "Minus",
+  "Period",
+  "Quote",
+  "Semicolon",
+  "Slash",
+  "Backspace",
+  "Enter",
+  "Space",
+  "Tab",
+  "Delete",
+  "End",
+  "Home",
+  "Insert",
+  "PageDown",
+  "PageUp",
+  "ArrowUp",
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+  "NumpadAdd",
+  "NumpadDecimal",
+  "NumpadDivide",
+  "NumpadEnter",
+  "NumpadEqual",
+  "NumpadMultiply",
+  "NumpadSubtract",
+]);
+
+const CODE_DISPLAY_SYMBOLS: Record<string, string> = {
+  Backquote: "`",
+  Backslash: "\\",
+  BracketLeft: "[",
+  BracketRight: "]",
+  Comma: ",",
+  Equal: "=",
+  Minus: "-",
+  Period: ".",
+  Quote: "'",
+  Semicolon: ";",
+  Slash: "/",
+  ArrowUp: "↑",
+  ArrowDown: "↓",
+  ArrowLeft: "←",
+  ArrowRight: "→",
+};
+
+function formatKeyEventToShortcut(e: KeyboardEvent): string | null {
   const modifiers: string[] = [];
   if (e.metaKey) modifiers.push("Super");
   if (e.ctrlKey) modifiers.push("Ctrl");
   if (e.altKey) modifiers.push("Alt");
   if (e.shiftKey) modifiers.push("Shift");
 
-  const ignored = new Set(["Meta", "Control", "Alt", "Shift", "Dead", "Process"]);
-  if (ignored.has(e.key) || modifiers.length === 0) {
+  if (modifiers.length === 0) {
     return null;
   }
 
-  let mainKey = e.code;
-  if (mainKey === "Space") mainKey = "Space";
-  else if (mainKey.startsWith("Key")) mainKey = mainKey.slice(3);
-  else if (mainKey.startsWith("Digit")) mainKey = mainKey.slice(5);
-  else if (mainKey.startsWith("F") && /^F\d+$/.test(mainKey)) mainKey = mainKey;
-  else if (e.key.length === 1) mainKey = e.key.toUpperCase();
+  // Only ignore actual modifier keys; do NOT ignore "Dead" / "Process" because
+  // macOS Option+letter dead keys and CJK IME still provide the physical e.code.
+  if (MODIFIER_CODES.has(e.code) || MODIFIER_KEYS.has(e.key)) {
+    return null;
+  }
+
+  let mainKey: string | null = null;
+  const code = e.code || "";
+  if (code === "Space") {
+    mainKey = "Space";
+  } else if (/^Key[A-Z]$/.test(code)) {
+    mainKey = code.slice(3);
+  } else if (/^Digit[0-9]$/.test(code)) {
+    mainKey = code.slice(5);
+  } else if (/^F([1-9]|1[0-9]|2[0-4])$/.test(code)) {
+    mainKey = code;
+  } else if (/^Numpad[0-9]$/.test(code)) {
+    mainKey = code;
+  } else if (SUPPORTED_NAMED_CODES.has(code)) {
+    mainKey = code;
+  } else if (/^[a-zA-Z0-9]$/.test(e.key)) {
+    mainKey = e.key.toUpperCase();
+  }
+
+  if (!mainKey) {
+    return null;
+  }
 
   return [...modifiers, mainKey].join("+");
+}
+
+function formatShortcutForDisplay(shortcut: string, platform: string): string {
+  if (!shortcut) return "";
+  const isMac = platform === "macos";
+  return shortcut
+    .split("+")
+    .map((part) => {
+      const token = part.trim();
+      const upper = token.toUpperCase();
+      if (isMac) {
+        if (upper === "SUPER" || upper === "CMD" || upper === "COMMAND") return "⌘";
+        if (upper === "ALT" || upper === "OPTION") return "⌥";
+        if (upper === "CTRL" || upper === "CONTROL") return "⌃";
+        if (upper === "SHIFT") return "⇧";
+      } else {
+        if (upper === "SUPER" || upper === "CMD" || upper === "COMMAND") return "Win";
+      }
+      return CODE_DISPLAY_SYMBOLS[token] ?? token;
+    })
+    .join(isMac ? " " : "+");
+}
+
+function formatModifiersPreview(e: KeyboardEvent, platform: string): string {
+  const isMac = platform === "macos";
+  const parts: string[] = [];
+  if (e.metaKey) parts.push(isMac ? "⌘" : "Win");
+  if (e.ctrlKey) parts.push(isMac ? "⌃" : "Ctrl");
+  if (e.altKey) parts.push(isMac ? "⌥" : "Alt");
+  if (e.shiftKey) parts.push(isMac ? "⇧" : "Shift");
+  return parts.length > 0 ? `${parts.join(isMac ? " " : "+")} + ...` : "";
 }
 
 function syncActiveFields(s: AppSettings, activeId: string): AppSettings {
@@ -83,11 +203,14 @@ function syncActiveFields(s: AppSettings, activeId: string): AppSettings {
 export function SettingsWindow() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [platform, setPlatform] = useState("macos");
-  const [appVersion, setAppVersion] = useState("0.2.1");
+  const [appVersion, setAppVersion] = useState("0.2.2");
   const [axTrusted, setAxTrusted] = useState(true);
   const [showKey, setShowKey] = useState(false);
   const [blacklistText, setBlacklistText] = useState("");
   const [recordingShortcut, setRecordingShortcut] = useState(false);
+  const [recordingPreview, setRecordingPreview] = useState("");
+  const [savingShortcut, setSavingShortcut] = useState(false);
+  const shortcutButtonRef = useRef<HTMLButtonElement | null>(null);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
 
   const [fetchedModels, setFetchedModels] = useState<string[]>([]);
@@ -175,7 +298,7 @@ export function SettingsWindow() {
       const [plat, s, ver] = await Promise.all([
         api.getPlatform(),
         api.getSettings(),
-        getVersion().catch(() => "0.2.1"),
+        getVersion().catch(() => "0.2.2"),
       ]);
       setPlatform(plat);
       setAppVersion(ver);
@@ -204,6 +327,96 @@ export function SettingsWindow() {
       unsubs.forEach((p) => void p.then((fn) => fn()));
     };
   }, [runUpdateCheck]);
+
+  // Global window-level capture for shortcut recording so macOS WKWebView
+  // (where clicking a <button> does not grant keyboard focus) reliably captures keystrokes.
+  useEffect(() => {
+    if (!recordingShortcut) {
+      setRecordingPreview("");
+      return;
+    }
+
+    let committed = false;
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    void api.setShortcutRecording(true);
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      if (
+        (e.key === "Escape" || e.code === "Escape") &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !e.shiftKey
+      ) {
+        setRecordingShortcut(false);
+        return;
+      }
+
+      const combo = formatKeyEventToShortcut(e);
+      if (!combo) {
+        setRecordingPreview(formatModifiersPreview(e, platform));
+        return;
+      }
+
+      committed = true;
+      setRecordingShortcut(false);
+      setRecordingPreview("");
+      setSavingShortcut(true);
+      void api
+        .updateQuickAskShortcut(combo)
+        .then((saved) => {
+          setSettings((prev) =>
+            prev ? { ...prev, quickAskShortcut: saved.quickAskShortcut } : saved,
+          );
+          setStatusBanner({
+            type: "ok",
+            text: `弹窗助手全局快捷键已更新并立即生效：${formatShortcutForDisplay(
+              saved.quickAskShortcut,
+              platform,
+            )}`,
+          });
+        })
+        .catch((err) => {
+          setStatusBanner({ type: "err", text: String(err) });
+        })
+        .finally(() => {
+          setSavingShortcut(false);
+        });
+    };
+
+    const onKeyUp = (e: KeyboardEvent) => {
+      setRecordingPreview(formatModifiersPreview(e, platform));
+    };
+
+    const onMouseDown = (e: MouseEvent) => {
+      if (shortcutButtonRef.current?.contains(e.target as Node)) {
+        return;
+      }
+      setRecordingShortcut(false);
+    };
+
+    const onWindowBlur = () => {
+      setRecordingShortcut(false);
+    };
+
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("keyup", onKeyUp, true);
+    window.addEventListener("mousedown", onMouseDown, true);
+    window.addEventListener("blur", onWindowBlur);
+
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("keyup", onKeyUp, true);
+      window.removeEventListener("mousedown", onMouseDown, true);
+      window.removeEventListener("blur", onWindowBlur);
+      if (!committed) {
+        void api.setShortcutRecording(false);
+      }
+    };
+  }, [recordingShortcut, platform]);
 
   const activeProvider: ProviderConfig | undefined = settings
     ? settings.providers.find((p) => p.id === settings.activeProviderId) || settings.providers[0]
@@ -842,30 +1055,30 @@ export function SettingsWindow() {
               <div>
                 <div className="text-[13px] font-medium">弹窗助手全局快捷键</div>
                 <div className="text-[11.5px] text-[var(--text-muted)]">
-                  在任意界面一键唤起/收起桌面 AI 提问弹窗（默认 {platform === "macos" ? "Option+Space" : "Alt+Space"}）
+                  点击右侧按钮后直接按下新组合键即可立即生效（默认 {platform === "macos" ? "⌥ Space" : "Alt+Space"}）
                 </div>
               </div>
               <button
+                ref={shortcutButtonRef}
                 type="button"
-                onClick={() => setRecordingShortcut(true)}
-                onBlur={() => setRecordingShortcut(false)}
-                onKeyDown={(e) => {
-                  if (!recordingShortcut) return;
-                  e.preventDefault();
-                  const combo = formatKeyEventToShortcut(e);
-                  if (combo) {
-                    setSettings({ ...settings, quickAskShortcut: combo });
-                    setRecordingShortcut(false);
-                  }
-                }}
-                className={`h-8 px-3 rounded-lg border text-[12px] font-mono flex items-center gap-1.5 cursor-pointer shrink-0 ${
+                disabled={savingShortcut}
+                onClick={() => setRecordingShortcut((prev) => !prev)}
+                className={`h-8 px-3 rounded-lg border text-[12px] font-mono flex items-center gap-1.5 cursor-pointer shrink-0 disabled:opacity-50 ${
                   recordingShortcut
                     ? "bg-[var(--accent-soft)] border-[var(--accent)] text-[var(--accent)]"
-                    : "bg-[var(--surface)] border-[var(--border-color)] text-[var(--text-primary)]"
+                    : "bg-[var(--surface)] border-[var(--border-color)] hover:border-[var(--accent)] text-[var(--text-primary)]"
                 }`}
               >
-                <Keyboard className="w-3.5 h-3.5" />
-                <span>{recordingShortcut ? "请按下组合键..." : settings.quickAskShortcut}</span>
+                {savingShortcut ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Keyboard className="w-3.5 h-3.5" />
+                )}
+                <span>
+                  {recordingShortcut
+                    ? recordingPreview || "按下组合键（Esc 取消）"
+                    : formatShortcutForDisplay(settings.quickAskShortcut, platform)}
+                </span>
               </button>
             </div>
 

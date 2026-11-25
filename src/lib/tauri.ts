@@ -87,6 +87,10 @@ export const api = {
   getSettings: () => invoke<AppSettings>("get_settings"),
   saveSettings: (newSettings: AppSettings) =>
     invoke<AppSettings>("save_app_settings", { newSettings }),
+  setShortcutRecording: (recording: boolean) =>
+    invoke<void>("set_shortcut_recording", { recording }),
+  updateQuickAskShortcut: (shortcut: string) =>
+    invoke<AppSettings>("update_quick_ask_shortcut", { shortcut }),
   setSelectionEnabled: (enabled: boolean) =>
     invoke<AppSettings>("set_selection_enabled", { enabled }),
   fetchAvailableModels: (baseUrl: string, apiKey: string) =>

@@ -22,6 +22,7 @@ pub struct AppState {
     pub action_pinned: AtomicBool,
     pub quick_ask_pinned: AtomicBool,
     pub current_shortcut: Mutex<String>,
+    pub shortcut_recording: AtomicBool,
     pub action_session_id: Mutex<String>,
     pub quick_ask_session_id: Mutex<String>,
     pub tray_toggle_item: Mutex<Option<MenuItem<tauri::Wry>>>,
@@ -82,7 +83,8 @@ fn save_app_settings(
 ) -> Result<AppSettings, String> {
     new_settings.normalize_providers();
     let old_shortcut = state.current_shortcut.lock().clone();
-    if new_settings.quick_ask_shortcut != old_shortcut {
+    let was_paused = state.shortcut_recording.swap(false, Ordering::SeqCst);
+    if new_settings.quick_ask_shortcut != old_shortcut || was_paused {
         reregister_shortcut(&app, &old_shortcut, &new_settings.quick_ask_shortcut)?;
         *state.current_shortcut.lock() = new_settings.quick_ask_shortcut.clone();
     }
@@ -107,6 +109,46 @@ fn save_app_settings(
 
     let _ = app.emit("settings:updated", &new_settings);
     Ok(new_settings)
+}
+
+#[tauri::command]
+fn set_shortcut_recording(app: AppHandle, state: State<'_, AppState>, recording: bool) {
+    let shortcut = state.current_shortcut.lock().clone();
+    if recording {
+        if !state.shortcut_recording.swap(true, Ordering::SeqCst) && !shortcut.trim().is_empty() {
+            let _ = app.global_shortcut().unregister(shortcut.as_str());
+        }
+    } else if state.shortcut_recording.swap(false, Ordering::SeqCst) && !shortcut.trim().is_empty() {
+        let _ = register_shortcut(&app, &shortcut);
+    }
+}
+
+#[tauri::command]
+fn update_quick_ask_shortcut(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    shortcut: String,
+) -> Result<AppSettings, String> {
+    let trimmed = shortcut.trim().to_string();
+    if trimmed.is_empty() {
+        return Err("快捷键不能为空".to_string());
+    }
+
+    let old_shortcut = state.current_shortcut.lock().clone();
+    state.shortcut_recording.store(false, Ordering::SeqCst);
+
+    if let Err(err) = reregister_shortcut(&app, &old_shortcut, &trimmed) {
+        return Err(err);
+    }
+
+    *state.current_shortcut.lock() = trimmed.clone();
+    let mut s = state.settings.lock().clone();
+    s.quick_ask_shortcut = trimmed;
+    save_settings(&s)?;
+    *state.settings.lock() = s.clone();
+
+    let _ = app.emit("settings:updated", &s);
+    Ok(s)
 }
 
 #[tauri::command]
@@ -480,6 +522,7 @@ pub fn run() {
             action_pinned: AtomicBool::new(false),
             quick_ask_pinned: AtomicBool::new(false),
             current_shortcut: Mutex::new(initial_shortcut.clone()),
+            shortcut_recording: AtomicBool::new(false),
             action_session_id: Mutex::new(format!("ses_liteask_act_{}", Uuid::new_v4())),
             quick_ask_session_id: Mutex::new(format!("ses_liteask_ask_{}", Uuid::new_v4())),
             tray_toggle_item: Mutex::new(None),
@@ -544,6 +587,13 @@ pub fn run() {
                 settings_win.on_window_event(move |event| {
                     if let WindowEvent::CloseRequested { api, .. } = event {
                         api.prevent_close();
+                        let state = h.state::<AppState>();
+                        if state.shortcut_recording.swap(false, Ordering::SeqCst) {
+                            let shortcut = state.current_shortcut.lock().clone();
+                            if !shortcut.trim().is_empty() {
+                                let _ = register_shortcut(&h, &shortcut);
+                            }
+                        }
                         if let Some(w) = h.get_webview_window("settings") {
                             let _ = w.hide();
                         }
@@ -597,6 +647,8 @@ pub fn run() {
             get_platform,
             get_settings,
             save_app_settings,
+            set_shortcut_recording,
+            update_quick_ask_shortcut,
             set_selection_enabled,
             fetch_available_models,
             import_opencode_key,
@@ -613,6 +665,14 @@ pub fn run() {
             run_quick_ask_ai,
             cancel_ai,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running LiteAsk");
+        .build(tauri::generate_context!())
+        .expect("error while building LiteAsk")
+        .run(|app_handle, event| {
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = event {
+                show_settings_window(app_handle);
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (app_handle, event);
+        });
 }
