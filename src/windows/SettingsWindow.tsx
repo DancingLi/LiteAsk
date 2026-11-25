@@ -966,6 +966,52 @@ export function SettingsWindow() {
             {updateStatusText && (
               <p className="text-[12px] text-[var(--text-secondary)] pt-1">{updateStatusText}</p>
             )}
+            {availableUpdate && (
+              <div className="pt-2 mt-1 border-t border-[var(--border-color)] flex items-center justify-between gap-3">
+                <div className="min-w-0 flex-1 space-y-1">
+                  <div className="text-[12.5px] font-semibold text-[var(--accent)] flex items-center gap-1.5">
+                    <ArrowUpCircle className="w-4 h-4 shrink-0" />
+                    <span>
+                      v{availableUpdate.version} 可用（当前 v{appVersion}）
+                    </span>
+                  </div>
+                  {availableUpdate.body && (
+                    <p className="text-[11.5px] text-[var(--text-secondary)] whitespace-pre-wrap line-clamp-3">
+                      {availableUpdate.body}
+                    </p>
+                  )}
+                  {downloadProgress !== null && (
+                    <div className="pt-1">
+                      <div className="w-full h-1.5 rounded-full bg-[var(--surface)] overflow-hidden">
+                        <div
+                          className="h-full bg-[var(--accent)] transition-all duration-150"
+                          style={{ width: `${downloadProgress}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void handleInstallUpdate()}
+                  disabled={installingUpdate}
+                  className="h-8 px-3 rounded-lg bg-[var(--accent)] text-white text-[12px] font-medium hover:opacity-90 disabled:opacity-50 flex items-center gap-1.5 shrink-0 cursor-pointer"
+                >
+                  {installingUpdate ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Download className="w-3.5 h-3.5" />
+                  )}
+                  <span>
+                    {installingUpdate
+                      ? downloadProgress !== null
+                        ? `下载中 ${downloadProgress}%`
+                        : "更新中..."
+                      : "立即更新并重启"}
+                  </span>
+                </button>
+              </div>
+            )}
           </div>
         </section>
 
